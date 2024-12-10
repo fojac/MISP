@@ -1364,8 +1364,7 @@ class AppController extends Controller
         $scope = empty($this->scopeOverride) ? $this->modelClass : $this->scopeOverride;
         if ($scope === 'MispObject') {
             $scope = 'Object';
-        }
-        if ($scope === 'MispAttribute') {
+        } else if ($scope === 'MispAttribute') {
             $scope = 'Attribute';
         }
         if (!isset($this->RestSearch->paramArray[$scope])) {
@@ -1375,7 +1374,7 @@ class AppController extends Controller
             $modelName = 'MispObject';
         } else if ($scope === 'Attribute') {
             $modelName = 'MispAttribute';
-        }else {
+        } else {
             $modelName = $scope;
         }
         if (!isset($this->$modelName)) {
@@ -1395,13 +1394,13 @@ class AppController extends Controller
         if (empty($filters) && $this->request->is('get')) {
             throw new BadRequestException(__('Restsearch queries using GET and no parameters are not allowed. If you have passed parameters via a JSON body, make sure you use POST requests.'));
         }
+        if ($filters === false) {
+            return $exception;
+        }
         if (empty($filters['returnFormat'])) {
             $filters['returnFormat'] = 'json';
         }
         unset($filterData);
-        if ($filters === false) {
-            return $exception;
-        }
 
         $user = $this->_closeSession();
 
@@ -1420,7 +1419,7 @@ class AppController extends Controller
         $responseType = empty($model->validFormats[$returnFormat][0]) ? 'json' : $model->validFormats[$returnFormat][0];
         // halt execution if we were to query for items above the ID. Blocks the endless caching bug
         if (!empty($filters['page']) && !empty($filters['returnFormat']) && $filters['returnFormat'] === 'cache') {
-            if ($this->__cachingOverflow($filters, $scope)) {
+            if ($this->__cachingOverflow($filters, $modelName, $scope)) {
                 $filename = $this->RestSearch->getFilename($filters, $scope, $responseType);
                 return $this->RestResponse->viewData('', $responseType, false, true, $filename, [
                     'X-Result-Count' => 0,
@@ -1448,13 +1447,14 @@ class AppController extends Controller
      * Halt execution if we were to query for items above the ID. Blocks the endless caching bug.
      *
      * @param array $filters
+     * @param string $modelName
      * @param string $scope
      * @return bool
      */
-    private function __cachingOverflow($filters, $scope)
+    private function __cachingOverflow(array $filters, $modelName, $scope)
     {
         $offset = ($filters['page'] * (empty($filters['limit']) ? 60 : $filters['limit'])) + 1;
-        $max_id = $this->$scope->query(sprintf('SELECT max(id) as max_id from %s;', Inflector::tableize($scope)));
+        $max_id = $this->$modelName->query(sprintf('SELECT max(id) as max_id from %s;', Inflector::tableize($scope)));
         $max_id = intval($max_id[0][0]['max_id']);
         if ($max_id < $offset) {
             return true;
