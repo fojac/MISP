@@ -91,7 +91,7 @@ class AnalystData extends AppModel
                 'Orgc' => [
                     'className' => 'Organisation',
                     'fields' => [
-                        'id', 'name', 'uuid','type', 'sector', 'nationality', 'local'
+                        'id', 'name', 'uuid','type', 'description', 'sector', 'nationality', 'local'
                     ],
                     'foreignKey' => false,
                     'conditions' => [
@@ -381,12 +381,12 @@ class AnalystData extends AppModel
         ]);
     }
 
-    public function fetchChildNotesAndOpinions(array $user, array $analystData, $depth = 2): array
+    public function fetchChildNotesAndOpinions(array $user, array $analystData, $isRest = true, $depth = 2): array
     {
         if ($depth == 0 || !empty($this->fetchedUUIDFromRecursion[$analystData['uuid']])) {
             $hasMoreNotesOrOpinions =  $this->hasMoreNotesOrOpinions($analystData, $user);
             $analystData['_max_depth_reached'] = $hasMoreNotesOrOpinions;
-            return $analystData;
+            return $isRest ? [] : $analystData;
         }
         $this->fetchedUUIDFromRecursion[$analystData['uuid']] = true;
         $this->Note = ClassRegistry::init('Note');
@@ -415,13 +415,58 @@ class AnalystData extends AppModel
             ]
         ];
 
+        if ($isRest) {
+            // fetch notes and opinions as lists
+            $childNotesAndOpinions = [];
+            $childNotes = $this->Note->find('all', $paramsNote);
+            $childOpinions = $this->Opinion->find('all', $paramsOpinion);
+            $orgFields = ['id', 'uuid', 'name', 'type', 'description', 'sector', 'national', 'local'];
+            $orgTypes = ['Org', 'Orgc'];
+            if (!empty($childNotes)) {
+                foreach ($childNotes as $childNote) {
+                    foreach ($orgTypes as $orgType) {
+                        if (!empty($childOpinion['Note'][$orgType])) {
+                            $childNote['Note'][$orgType] = array_filter($childNote['Note'][$orgType], function ($key) use ($orgFields) {
+                                return in_array($key, $orgFields);
+                            }, ARRAY_FILTER_USE_KEY);    
+                        }
+                    }
+                    $childNotesAndOpinions[] = $childNote;
+                    $expandedNotesAndOpinions = $this->fetchChildNotesAndOpinions($user, $childNote['Note'], $isRest, $depth-1);
+                    if (!empty($expandedNotesAndOpinions)) {
+                        foreach ($expandedNotesAndOpinions as $expandedNoteOrOpinion) {
+                            $childNotesAndOpinions[] = $expandedNoteOrOpinion;
+                        }
+                    }
+                }
+            }
+            if (!empty($childOpinions)) {
+                foreach ($childOpinions as $childOpinion) {
+                    foreach ($orgTypes as $orgType) {
+                        if (!empty($childOpinion['Opinion'][$orgType])) {
+                            $childOpinion['Opinion'][$orgType] = array_filter($childOpinion['Opinion'][$orgType], function ($key) use ($orgFields) {
+                                return in_array($key, $orgFields);
+                            }, ARRAY_FILTER_USE_KEY);
+                        }
+                    }
+                    $childNotesAndOpinions[] = $childOpinion;
+                    $expandedNotesAndOpinions = $this->fetchChildNotesAndOpinions($user, $childOpinion['Opinion'], $isRest, $depth-1);
+                    if (!empty($expandedNotesAndOpinions)) {
+                        foreach ($expandedNotesAndOpinions as $expandedNoteOrOpinion) {
+                            $childNotesAndOpinions[] = $expandedNoteOrOpinion;
+                        }
+                    }
+                }
+            }
+            return $childNotesAndOpinions;
+        }
         // recursively fetch and include nested notes and opinions
-        $childNotes = array_map(function ($item) use ($user, $depth) {
-            $expandedNotes = $this->fetchChildNotesAndOpinions($user, $item['Note'], $depth-1);
+        $childNotes = array_map(function ($item) use ($user, $isRest, $depth) {
+            $expandedNotes = $this->fetchChildNotesAndOpinions($user, $item['Note'], $isRest, $depth-1);
             return $expandedNotes;
         }, $this->Note->find('all', $paramsNote));
-        $childOpinions = array_map(function ($item) use ($user, $depth) {
-            $expandedNotes = $this->fetchChildNotesAndOpinions($user, $item['Opinion'], $depth-1);
+        $childOpinions = array_map(function ($item) use ($user, $isRest, $depth) {
+            $expandedNotes = $this->fetchChildNotesAndOpinions($user, $item['Opinion'], $isRest, $depth-1);
             return $expandedNotes;
         }, $this->Opinion->find('all', $paramsOpinion));
 
@@ -432,8 +477,8 @@ class AnalystData extends AppModel
             $analystData['Note'] = $childNotes;
         }
         if (!empty($childOpinions)) {
-            foreach ($childNotes as $childNote) {
-                $this->fetchedUUIDFromRecursion[$childNote['uuid']] = true;
+            foreach ($childOpinions as $childOpinion) {
+                $this->fetchedUUIDFromRecursion[$childOpinion['uuid']] = true;
             }
             $analystData['Opinion'] = $childOpinions;
         }
@@ -496,7 +541,7 @@ class AnalystData extends AppModel
         $analystData = $analystData[$this->alias];
         $this->Note = ClassRegistry::init('Note');
         $this->Opinion = ClassRegistry::init('Opinion');
-        $analystData = $this->fetchChildNotesAndOpinions($user, $analystData, $depth);
+        $analystData = $this->fetchChildNotesAndOpinions($user, $analystData, isset($this->__isRest) ? $this->__isRest : false, $depth);
         return $analystData;
     }
 

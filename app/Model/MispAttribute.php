@@ -3149,8 +3149,7 @@ class MispAttribute extends AppModel
                     'threat_level_id' => array('function' => 'set_filter_threat_level_id')
                 ),
                 'Object' => array(
-                    'object_name' => array('function' => 'set_filter_object_name'),
-                    'deleted' => array('function' => 'set_filter_deleted')
+                    'object_name' => array('function' => 'set_filter_object_name')
                 )
             );
             foreach ($params as $param => $paramData) {
