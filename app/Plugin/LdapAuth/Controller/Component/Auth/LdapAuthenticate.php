@@ -1,5 +1,7 @@
 <?php
 
+use PSpell\Config;
+
 App::uses('BaseAuthenticate', 'Controller/Component/Auth');
 
 class LdapAuthenticate extends BaseAuthenticate
@@ -46,7 +48,13 @@ class LdapAuthenticate extends BaseAuthenticate
             'ldapTlsCustomCaCert' => Configure::read('LdapAuth.ldapTlsCustomCaCert') ?? false,
             'ldapTlsCrlCheck' => Configure::read('LdapAuth.ldapTlsCrlCheck') ?? LDAP_OPT_X_TLS_CRL_PEER,
             'ldapTlsProtocolMin' => Configure::read('LdapAuth.ldapTlsProtocolMin') ?? LDAP_OPT_X_TLS_PROTOCOL_TLS1_2,
+            'ldapEscape' => Configure::read('LdapAuth.ldapEscape') ?? false,
+            'ldapEscapeIgnoreChars' => Configure::read('LdapAuth.ldapEscapeIgnoreChars') ?? "",
         ];
+
+        if (self::$conf['ldapEscape'] && self::$conf['ldapSearchFilter']) {
+            self::$conf['ldapSearchFilter'] = ldap_escape(self::$conf['ldapSearchFilter'], self::$conf['ldapEscapeIgnoreChars'], LDAP_ESCAPE_FILTER);
+        }
     }
 
     public function authenticate(CakeRequest $request, CakeResponse $response)
@@ -101,7 +109,7 @@ class LdapAuthenticate extends BaseAuthenticate
 
     private function getEmailAddress($ldapEmailField, $ldapUserData)
     {
-        // return the email address of an LDAP user if one of the fields in $ldapEmaiLField exists
+        // return the email address of an LDAP user if one of the fields in $ldapEmailField exists
         foreach ($ldapEmailField as $field) {
             if (isset($ldapUserData[0][$field][0])) {
                 return $ldapUserData[0][$field][0];
@@ -113,7 +121,10 @@ class LdapAuthenticate extends BaseAuthenticate
     private function getUserMemberships($ldapconn, $ldapUserData)
     {
         $groups = [];
-        $filter = '(member= ' . $ldapUserData[0]['dn'] . ')';
+        if (Configure::read('LdapAuth.ldapEscape')) {
+            $ldapUserData[0]['dn'] = ldap_escape($ldapUserData[0]['dn'], self::$conf['ldapEscapeIgnoreChars'], LDAP_ESCAPE_FILTER);
+        }
+        $filter = '(member=' . $ldapUserData[0]['dn'] . ')';
         $ldapUserMemberships = ldap_search($ldapconn, self::$conf['ldapDn'], $filter, ['cn']);
 
         if ($ldapUserMemberships) {
@@ -241,8 +252,13 @@ class LdapAuthenticate extends BaseAuthenticate
             $orgId = $firstOrg['Organisation']['id'];
         }
 
-        // Set role_id based on group membership or default role
+        // Set role_id based on group membership with ldapReaderUser bind or default role
         if (is_array(self::$conf['ldapDefaultRoleId'])) {
+            $ldapbind = ldap_bind($ldapconn, self::$conf['ldapReaderUser'],  self::$conf['ldapReaderPassword']);
+            if (!$ldapbind) {
+                CakeLog::error("[LdapAuth] Invalid LDAP reader user credentials: " . ldap_error($ldapconn));
+                throw new UnauthorizedException(__('User could not be authenticated by LDAP.'));
+            }
             // Get user memberships
             $groups = $this->getUserMemberships($ldapconn, $ldapUserData);
 

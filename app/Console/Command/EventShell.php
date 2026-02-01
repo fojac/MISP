@@ -233,7 +233,8 @@ class EventShell extends AppShell
     private function __runCaching($user, $typeData, $id, $export_type, $subType = '')
     {
         $export_type = strtolower($typeData['type']);
-        $final = $this->{$typeData['scope']}->restSearch($user, $typeData['params']['returnFormat'], $typeData['params'], false, $id);
+        $modelScope = $typeData['scope'] == 'Attribute' ? 'MispAttribute' : $typeData['scope'];
+        $final = $this->{$modelScope}->restSearch($user, $typeData['params']['returnFormat'], $typeData['params'], false, $id);
         $dir = new Folder(APP . 'tmp/cached_exports/' . $export_type, true, 0750);
         //echo PHP_EOL . $dir->pwd() . DS . 'misp.' . $export_type . $subType . '.ADMIN' . $typeData['extension'] . PHP_EOL;
         if ($user['Role']['perm_site_admin']) {
@@ -322,7 +323,7 @@ class EventShell extends AppShell
     {
         if (
             empty($this->args[0]) || empty($this->args[1]) || empty($this->args[2]) ||
-            empty($this->args[3]) || empty($this->args[4]) || empty($this->args[5])
+            empty($this->args[3]) || empty($this->args[4])
         ) {
             die('Usage: ' . $this->Server->command_line_functions['event_management_tasks']['data']['Posts email'] . PHP_EOL);
         }
@@ -330,11 +331,10 @@ class EventShell extends AppShell
         $userId = intval($this->args[0]);
         $postId = intval($this->args[1]);
         $eventId = intval($this->args[2]);
-        $title = $this->args[3];
-        $message = $this->args[4];
-        $this->Job->id = intval($this->args[5]);
+        $mailContent = $this->getBackgroundJobsTool()->fetchDataFile($this->args[3]);
+        $this->Job->id = intval($this->args[4]);
 
-        $result = $this->Post->sendPostsEmail($userId, $postId, $eventId, $title, $message);
+        $result = $this->Post->sendPostsEmail($userId, $postId, $eventId, $mailContent['title'], $mailContent['message']);
 
         if ($result) {
             $this->Job->save([
@@ -393,7 +393,7 @@ class EventShell extends AppShell
 
         if ($task['Task']['timer'] > 0)    $this->Task->reQueue($task, 'cache', 'EventShell', 'enqueueCaching', false, false);
 
-        // Queue a set of exports for admins. This "ADMIN" organisation. The organisation of the admin users doesn't actually matter, it is only used to indentify
+        // Queue a set of exports for admins. This "ADMIN" organisation. The organisation of the admin users doesn't actually matter, it is only used to identify
         // the special cache files containing all events
         $i = 0;
         foreach ($users as $user) {

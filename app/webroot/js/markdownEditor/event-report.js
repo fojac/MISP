@@ -62,6 +62,7 @@ var renderingRules = {
 }
 var galaxyMatrixTimer = {}, tagTimers = {};
 var cache_matrix = {}, cache_tag = {};
+var draw_matrix_timer
 var firstCustomPostRenderCall = true;
 var contentBeforeSuggestions
 var typeToCategoryMapping
@@ -165,9 +166,9 @@ function pasteImg(cm, event) {
     if (!fileList[0]) {
         return
     }
-    const dataTransfert = new DataTransfer()
-    dataTransfert.items.add(fileList[0])
-    fileList = dataTransfert.files
+    const dataTransfer = new DataTransfer()
+    dataTransfer.items.add(fileList[0])
+    fileList = dataTransfer.files
     if (fileList.length > 0) { // pasting contains a picture to be uploaded
         event.preventDefault();
         const $picture = $('<div style="display: flex; justify-content: center; align-items: center; margin: 1em; border: 1px solid #aaaaaa99;">').append($('<img id="pastedPicturePreview">'))
@@ -197,7 +198,7 @@ function pasteImg(cm, event) {
             $('<span>').text('Note that these pictures are not synchronized.')
         )
         const $modalBody = $('<div>').append(
-            $('<p>').text('You\'re about to include a picture in your report. Would you like to add it as an attachment to the event (This will create an attachment Attribute) or should it be a save as a local image (this will not be synchronized).'),
+            $('<p>').text('You\'re about to include a picture in your report. Would you like to add it as an attachment to the event (This will create an attachment Attribute) or should it be saved as a local image (this will not be synchronized)?'),
             $picture,
             $('<div>').append($checkboxContainer),
             $attributeFormContainer,
@@ -646,17 +647,17 @@ function MISPElementRule(state, startLine, endLine, silent) {
             // parseLinkDestination does not support trailing characters such as `.` after the link
             // so we have to find the matching `)`
             var destinationEnd = res.str.length - 1
-            var traillingCharNumber = 0
+            var trailingCharNumber = 0
             for (var i = res.str.length-1; i > 1; i--) {
                 var code = res.str.charCodeAt(i)
                 if (code === 0x29 /* ) */) {
                     destinationEnd = i
                     break
                 }
-                traillingCharNumber++
+                trailingCharNumber++
             }
             elementID = res.str.substring(1, destinationEnd);
-            pos = res.pos - 1 - traillingCharNumber;
+            pos = res.pos - 1 - trailingCharNumber;
         }
     }
 
@@ -780,7 +781,7 @@ function renderMISPElement(scope, elementID, indexes) {
             if (mispObject !== undefined) {
                 var associatedTemplate = mispObject.template_uuid + '.' + mispObject.template_version
                 var objectTemplate = proxyMISPElements['objectTemplates'][associatedTemplate]
-                var topPriorityValue = mispObject.Attribute.length
+                var topPriorityValue = mispObject.Attribute !== undefined ? mispObject.Attribute.length : '- no Attributes -'
                 if (objectTemplate !== undefined) {
                     var temp = getPriorityValue(mispObject, objectTemplate)
                     topPriorityValue = temp !== false ? temp : topPriorityValue
@@ -886,7 +887,10 @@ function attachRemoteMISPElements() {
                 attachGalaxyMatrix($div, eventID, elementID)
             }, firstCustomPostRenderCall ? 0 : slowDebounceDelay);
         } else {
-            $div.html(cache_matrix[cacheKey])
+            clearTimeout(draw_matrix_timer);
+            draw_matrix_timer = setTimeout(function() {
+                $div.html(cache_matrix[cacheKey])
+            }, 2000);
         }
     })
 
@@ -982,7 +986,7 @@ function fetchTagInfo(tagNames, callback) {
 
                 proxyMISPElements['tag'][tagName] = tag;
 
-                $tag = getTagReprensentation(tag);
+                $tag = getTagRepresentation(tag);
                 cache_tag[tagName] = $tag[0].outerHTML;
             }
 
@@ -1353,7 +1357,7 @@ function toggleSuggestionInterface(enabled) {
         setEditorData(originalRaw)
         $('#editor-subcontainer').show()
         $suggestionContainer.hide()
-        $mardownViewerToolbar.find('.btn-group:first button').css('visibility', 'visible')
+        $markdownViewerToolbar.find('.btn-group:first button').css('visibility', 'visible')
         $('#suggestionCloseButton').remove()
         cm.refresh()
     }
@@ -1452,8 +1456,8 @@ function getContentWithCheckedElements(isReplacement) {
         var suggestion = suggestions[value][suggestionKey]
         contentWithPickedSuggestions += content.substr(nextIndex, suggestion.startIndex.index - nextIndex)
         nextIndex = suggestion.startIndex.index
-        var renderedInMardown = $('.misp-element-wrapper.suggestion[data-suggestionkey="' + suggestionKey + '"]').length > 0;
-        if (suggestion.checked && renderedInMardown) { // If the suggestion is not rendered, ignore it (could happen if parent block is escaped)
+        var renderedInMarkdown = $('.misp-element-wrapper.suggestion[data-suggestionkey="' + suggestionKey + '"]').length > 0;
+        if (suggestion.checked && renderedInMarkdown) { // If the suggestion is not rendered, ignore it (could happen if parent block is escaped)
             if (isReplacement) {
                 if (pickedSuggestion.isContext === true) {
                     contentWithPickedSuggestions += '@[tag](' + suggestion.complexTypeToolResult.replacement + ')'
@@ -1715,9 +1719,11 @@ function constructObject(object) {
         .css({'margin-bottom': '3px'})
     var $thead = constructAttributeHeader({}, true, true)
     var $tbody = $('<tbody/>')
-    object.Attribute.forEach(function(attribute) {
-        $tbody.append(constructAttributeRow(attribute, true))
-    })
+    if (object.Attribute !== undefined) {
+        object.Attribute.forEach(function(attribute) {
+            $tbody.append(constructAttributeRow(attribute, true))
+        })
+    }
     $attributeTable.append($thead, $tbody)
     $object.append($top, $attributeTable)
     return $('<div/>').append($object)
@@ -1726,10 +1732,12 @@ function constructObject(object) {
 function getPriorityValue(mispObject, objectTemplate) {
     for (var i = 0; i < objectTemplate.ObjectTemplateElement.length; i++) {
         var object_relation = objectTemplate.ObjectTemplateElement[i].object_relation;
-        for (var j = 0; j < mispObject.Attribute.length; j++) {
-            var attribute = mispObject.Attribute[j];
-            if (attribute.object_relation === object_relation) {
-                return attribute.value
+        if (mispObject.Attribute !== undefined) {
+            for (var j = 0; j < mispObject.Attribute.length; j++) {
+                var attribute = mispObject.Attribute[j];
+                if (attribute.object_relation === object_relation) {
+                    return attribute.value
+                }
             }
         }
     }
@@ -1739,7 +1747,7 @@ function getPriorityValue(mispObject, objectTemplate) {
 function getTopPriorityValue(object) {
     var associatedTemplate = object.template_uuid + '.' + object.template_version
     var objectTemplate = proxyMISPElements['objectTemplates'][associatedTemplate]
-    var topPriorityValue = object.Attribute.length > 0 ? object.Attribute[0].value : ''
+    var topPriorityValue = object.Attribute !== undefined && object.Attribute.length > 0 ? object.Attribute[0].value : ''
     if (objectTemplate !== undefined) {
         var temp = getPriorityValue(object, objectTemplate)
         topPriorityValue = temp !== false ? temp : topPriorityValue
@@ -1760,7 +1768,7 @@ function constructTag(tagName) {
     return $('<div/>').append($info)
 }
 
-function getTagReprensentation(tagData) {
+function getTagRepresentation(tagData) {
     var $tag
     if (tagData.GalaxyCluster !== undefined) {
         $tag = constructClusterTagHtml(tagData)
@@ -1790,8 +1798,9 @@ function constructClusterTagHtml(tagData) {
         tagData.Tag.colour = '#ffffff'
         addBorder = true
     }
+    var faNamespace = getFontAwesomeNamespace(tagData.GalaxyCluster.Galaxy.icon);
     var $tag = $('<span/>').append(
-        $('<i/>').addClass('fa fa-' + tagData.GalaxyCluster.Galaxy.icon).css('margin-right', '5px'),
+        $('<i/>').addClass(faNamespace + ' fa-' + tagData.GalaxyCluster.Galaxy.icon).css('margin-right', '5px'),
         $('<span/>').text(tagData.GalaxyCluster.type + ' ↦ ' + tagData.GalaxyCluster.value)
     )
         .addClass('tag')
@@ -2271,7 +2280,7 @@ function constructContextReplacementTable(unreferencedContext) {
 }
 
 function addCloseSuggestionButtonToToolbar() {
-    var $toolbarMode = $mardownViewerToolbar.find('.btn-group:first')
+    var $toolbarMode = $markdownViewerToolbar.find('.btn-group:first')
     if ($toolbarMode.find('#suggestionCloseButton').length == 0) {
         $toolbarMode.find('button').css('visibility', 'hidden')
         var $closeButton = $('<button id="suggestionCloseButton" type="button"/>').addClass('btn btn-danger').css({

@@ -620,7 +620,7 @@ function inputFieldButtonActive(selector) {
 
 function inputFieldButtonPassive(selector) {
     $(selector).closest('.inline-input-container').children('.inline-input-accept').addClass('inline-input-passive').removeClass('inline-input-active');
-    $(selector).closest('.inline-input-container').children('.inline-input-daecline').addClass('inline-input-passive').removeClass('inline-input-active');
+    $(selector).closest('.inline-input-container').children('.inline-input-decline').addClass('inline-input-passive').removeClass('inline-input-active');
 }
 
 function autoresize(textarea) {
@@ -946,6 +946,14 @@ function toggleAllCheckboxes() {
     }
 }
 
+function toggleAllObjectAttributeCheckboxes(object_id){
+    if ($(".select_all_object_attributes_" + object_id).is(":checked")) {
+        $('.Object_' + object_id + '_collapsible_attr input.select_attribute').prop("checked", true);
+    } else {
+        $('.Object_' + object_id + '_collapsible_attr input.select_attribute').prop("checked", false);
+    }
+}
+
 function toggleAllTaxonomyCheckboxes() {
     if ($(".select_all").is(":checked")) {
         $(".select_taxonomy").prop("checked", true);
@@ -1253,6 +1261,7 @@ function redirectAddObject(templateId, additionalData) {
 }
 
 function openGenericModal(url, modalData, callback) {
+    url = sanitizeUrlForTraversal(url);
     $.ajax({
         type: "get",
         url: url,
@@ -1296,6 +1305,7 @@ function openGenericModal(url, modalData, callback) {
 }
 
 function openGenericModalPost(url, body) {
+    url = sanitizeUrlForTraversal(url);
     $.ajax({
         data: body,
         type: "post",
@@ -1359,6 +1369,7 @@ function submitPopoverForm(context_id, referer, update_context_id, modal, popove
     if (!url.startsWith('http')) {
         url = baseurl + url;
     }
+    var formData = new FormData($form[0])
     $.ajax({
         beforeSend: function () {
             if (modal) {
@@ -1370,13 +1381,15 @@ function submitPopoverForm(context_id, referer, update_context_id, modal, popove
                     $("#gray_out").fadeOut();
                     $("#popover_form").fadeOut();
                     if (popover_dismiss_id_to_close !== undefined) {
-                        $('[data-dismissid="' + popover_dismiss_id_to_close + '"]').popover('destroy');
+                        $('[data-dismissId="' + popover_dismiss_id_to_close + '"]').popover('destroy');
                     }
                     $(".loading").show();
                 }
             }
-        },
-        data: $form.serialize(),
+        }, 
+        data: formData,
+        processData: false,
+        contentType: false,
         success: function (data) {
             if (closePopover) {
                 if (modal) {
@@ -1606,7 +1619,7 @@ function addAllTags(tagArray) {
     });
 }
 
-function removeTemplateTag(id, name) {
+function removeTemplateTag(id) {
     selectedTags.forEach(function(tag) {
         if (tag == id) {
             var index = selectedTags.indexOf(id);
@@ -1770,9 +1783,9 @@ function openPopover(clicked, data, hover, placement, callback) {
     placement = placement === undefined ? 'right' : placement;
     /* popup handling */
     var $clicked = $(clicked);
-    var randomId = $clicked.attr('data-dismissid') !== undefined ? $clicked.attr('data-dismissid') : Math.random().toString(36).substr(2,9); // used to recover the button that triggered the popover (so that we can destroy the popover)
+    var randomId = $clicked.attr('data-dismissId') !== undefined ? $clicked.attr('data-dismissId') : Math.random().toString(36).substr(2,9); // used to recover the button that triggered the popover (so that we can destroy the popover)
     var loadingHtml = '<div style="height: 75px; width: 75px;"><div class="spinner"></div><div class="loadingText">Loading</div></div>';
-    $clicked.attr('data-dismissid', randomId);
+    $clicked.attr('data-dismissId', randomId);
     var closeButtonHtml = '<button class="close" style="margin-left: 5px;">×</button>';
 
     if (!$clicked.data('popover')) { // true when popover was already created defined
@@ -1783,7 +1796,7 @@ function openPopover(clicked, data, hover, placement, callback) {
             trigger: 'manual',
             content: loadingHtml,
             container: 'body',
-            template: '<div class="popover" role="tooltip" data-dismissid="' + randomId + '"><div class="arrow"></div><h3 class="popover-title"></h3><div class="popover-content"><div class="data-content"></div></div></div>'
+            template: '<div class="popover" role="tooltip" data-dismissId="' + randomId + '"><div class="arrow"></div><h3 class="popover-title"></h3><div class="popover-content"><div class="data-content"></div></div></div>'
         };
         $clicked.popover(popoverOptions)
         .on('shown.bs.popover', function() {
@@ -1995,6 +2008,7 @@ function popoverConfirm(clicked, message, placement, callback) {
 }
 
 function simplePopup(url, requestType, data) {
+    url = sanitizeUrlForTraversal(url);
     requestType = requestType === undefined ? 'GET' : requestType
     data = data === undefined ? [] : data
     $("#gray_out").fadeIn();
@@ -2168,9 +2182,19 @@ function indexEvaluateFiltering() {
             $('#value_published').html("");
         }
         if (filtering.hasproposal != 2) {
-            $('#value_hasproposal').html(publishedOptions[filtering.hasproposal]);
+            $('#value_hasproposal').html(hasproposalOptions[filtering.hasproposal]);
         } else {
             $('#value_hasproposal').html("");
+        }
+        if (filtering.extending != 2) {
+            $('#value_extending').html(extendsOptions[filtering.extending]);
+        } else {
+            $('#value_extending').html("");
+        }
+        if (filtering.extended != 2) {
+            $('#value_extended').html(extendsOptions[filtering.extended]);
+        } else {
+            $('#value_extended').html("");
         }
         if (filtering.date.from != null) {
             var text = "";
@@ -2408,6 +2432,14 @@ function indexCreateFilters() {
             if (text != "") text += "/";
             text += "searchhasproposal:" + filtering.hasproposal;
         }
+        if (filtering.extending != "2") {
+            if (text != "") text += "/";
+            text += "searchextending:" + filtering.extending;
+        }
+        if (filtering.extended != "2") {
+            if (text != "") text += "/";
+            text += "searchextended:" + filtering.extended;
+        }
     } else {
         for (var i = 0; i < differentFilters.length; i++) {
             if (filtering[differentFilters[i]]) {
@@ -2530,6 +2562,12 @@ function indexAddRule(param) {
         } else if (param.data.param1 == "hasproposal") {
             var value = encodeURIComponent($('#EventSearchhasproposal').val());
             if (value != "") filtering.hasproposal = value;
+        } else if (param.data.param1 == "extending") {
+            var value = encodeURIComponent($('#EventSearchextending').val());
+            if (value != "") filtering.extending = value; 
+        } else if (param.data.param1 == "extended") {
+            var value = encodeURIComponent($('#EventSearchextended').val());
+            if (value != "") filtering.extended = value;
         } else {
             var value = encodeURIComponent($('#EventSearch' + param.data.param1).val());
             var operator = operators[encodeURIComponent($('#EventSearchbool').val())];
@@ -2595,6 +2633,10 @@ function indexFilterClearRow(field) {
         filtering.published = 2;
     } else if (field == "hasproposal") {
         filtering.hasproposal = 2;
+    } else if (field == "extending") {
+        filtering.extending = 2;
+    } else if (field == "extended") {
+        filtering.extended = 2;
     } else if (differentFilters.indexOf(field) != -1) {
         filtering[field] = "";
     } else {
@@ -2814,6 +2856,7 @@ function exportChoiceSelect(e) {
 }
 
 function importChoiceSelect(url, ajax) {
+    url = sanitizeUrlForTraversal(url);
     if (ajax == 'false') {
         document.location.href = url;
     } else {
@@ -2954,7 +2997,9 @@ function moduleResultsSubmit(id) {
                 meta_category: $(this).find('.ObjectMetaCategory').text(),
                 distribution: $(this).find('.ObjectDistribution').val(),
                 sharing_group_id: $(this).find('.ObjectSharingGroup').val(),
-                comment: $(this).find('.ObjectComment').val()
+                comment: $(this).find('.ObjectComment').val(),
+                first_seen: $(this).find('.ObjectFirstSeen').val(),
+                last_seen: $(this).find('.ObjectLastSeen').val(),
             }
             if (!temp['import_object']) {
                 return true;
@@ -3007,7 +3052,9 @@ function moduleResultsSubmit(id) {
                         disable_correlation: $(this).find('.AttributeDisableCorrelation')[0].checked,
                         comment: $(this).find('.AttributeComment').val(),
                         distribution: $(this).find('.AttributeDistribution').val(),
-                        sharing_group_id: $(this).find('.AttributeSharingGroup').val()
+                        sharing_group_id: $(this).find('.AttributeSharingGroup').val(),
+                        first_seen: $(this).find('.AttributeFirstSeen').val(),
+                        last_seen: $(this).find('.AttributeLastSeen').val(),
                     }
                     if (!attribute['import_attribute']) {
                         return true;
@@ -3067,7 +3114,9 @@ function moduleResultsSubmit(id) {
                 disable_correlation: $(this).find('.AttributeDisableCorrelation')[0].checked,
                 comment: $(this).find('.AttributeComment').val(),
                 distribution: $(this).find('.AttributeDistribution').val(),
-                sharing_group_id: $(this).find('.AttributeSharingGroup').val()
+                sharing_group_id: $(this).find('.AttributeSharingGroup').val(),
+                first_seen: $(this).find('.AttributeFirstSeen').val(),
+                last_seen: $(this).find('.AttributeLastSeen').val(),
             }
             if (!temp['import_attribute']) {
                 return true;
@@ -3270,8 +3319,8 @@ function sharingGroupPopulateServers() {
     var html = '';
     servers.forEach(function(server) {
         html = '<tr id="serverRow' + id + '" class="serverRow">';
-        html += '<td>' + server.name + '&nbsp;</td>';
-        html += '<td>' + server.url + '&nbsp;</td>';
+        html += '<td>' + $('<div>').text(server.name).html() + '&nbsp;</td>';
+        html += '<td>' + $('<div>').text(server.url).html() + '&nbsp;</td>';
         html += '<td>';
         html += '<input id="serverAddOrgs' + id + '" type="checkbox" onClick="sharingGroupServerAddOrgs(' + id + ')" ';
         if (server.all_orgs) html += 'checked';
@@ -3659,13 +3708,69 @@ function testConnection(id) {
                 html += '<span class="orange bold" title="The user account on the remote instance is not a sync user.">Remote user not a sync user, only pulling events is available.</span>';
                 break;
             case 8:
-                html += '<span class="orange bold" title="The user account on the remote instance is only a sightings user.">Remote user not a sync user, only pulling events is available. Pushing availale for sightings only</span>';
+                html += '<span class="orange bold" title="The user account on the remote instance is only a sightings user.">Remote user not a sync user, only pulling events is available. Pushing available for sightings only</span>';
                 break;
             }
 
             $("#connection_test_" + id).html(html);
         }
     })
+}
+
+function testSyncRule(id, method) {
+    var resultContainer = $("#sync_rule_" + method + "_test_" + id);
+    $.ajax({
+        url: baseurl + '/servers/testSyncRules/' + id + '/' + method,
+        type: 'GET',
+        beforeSend: function () {
+            resultContainer.text('Running test...');
+        },
+        error: function () {
+            resultContainer.html('<span class="red bold">Internal error</span>');
+        },
+        success: function (response) {
+            resultContainer.empty();
+            if (typeof response !== 'object') {
+                resultContainer.html('<span class="red bold">Internal error</span>');
+            } else if ("error" in response) {
+                resultContainer.append(
+                    $('<span>')
+                        .attr('class', 'red bold')
+                        .text('Error')
+                ).append(
+                    $('<span>')
+                        .text(': #' + response.error)
+                );
+            } else {
+                var resultTextFiltered = response.without_rules - response.with_rules
+                if (resultTextFiltered != 0) {
+                    resultTextFiltered += ' (' + (((response.without_rules - response.with_rules) / response.without_rules) * 100).toFixed(1) + '%' + ')'
+                }
+                var resultTextSync = response.with_rules
+                if (resultTextSync != 0) {
+                    resultTextSync += ' (' + ((response.with_rules / response.without_rules) * 100).toFixed(1) + '%' + ')'
+                }
+                resultContainer.append(
+                    $('<div>').css({'text-wrap': 'nowrap'}).append(
+                        $('<div>').append(
+                            $('<span>')
+                                .attr('class', 'red bold')
+                                .text('# Dropped Events'),
+                            $('<span>')
+                                .text(': ' + resultTextFiltered)
+                        ),
+                        $('<div>').append(
+                            $('<span>')
+                                .attr('class', 'green bold')
+                                .text('# Events to be Synced'),
+                            $('<span>')
+                                .text(': ' + resultTextSync)
+                        ),
+                    )
+                )
+            }
+        }
+    });
 }
 
 function getTextColour(hex) {
@@ -3735,10 +3840,14 @@ function serverRuleUpdate() {
     validOptions.forEach(function(type) {
         validFields.forEach(function(field) {
             var indexedList = {};
-            if (type === 'push' || field == 'type_objects') {
+            if (type === 'push' || field == 'type_objects' || field == 'orgs') {
                 if (window[field] !== undefined) {
                     window[field].forEach(function(item) {
-                        indexedList[item.id] = item.name;
+                        if (field == 'orgs') {
+                            indexedList[item.uuid] = item.name + ' (' + item.uuid + ')';
+                        } else {
+                            indexedList[item.id] = item.name;
+                        }
                     });
                 }
             }
@@ -3910,6 +4019,36 @@ function toggleBoolFilter(param) {
     }
     fetchAttributes(currentUri, res);
 }
+
+function toggleWarningFilter(param) { 
+    if (querybuilderTool === undefined) {
+        triggerEventFilteringTool(true); // allows to fetch rules
+    }
+    var rules = querybuilderTool.getRules({ skip_empty: true, allow_invalid: true });
+    var res = cleanRules(rules);
+
+    var [key, value] = param.split(':');
+
+    if (key === "warning" && res["warninglistId"] !== undefined) {
+        res["warninglistId"] = 0;
+        res["warning"] = value;
+    } else if (key === "warninglistId" && res["warning"] !== undefined) {
+        res["warning"] = 0;
+        res["warninglistId"] = value;
+    } else {
+        var current = res[key];
+
+        if (current !== undefined) {
+            res[key] = (current == value) ? 0 : value;
+        } else {
+            res[key] = value;
+        }
+    }
+
+    fetchAttributes(currentUri, res);
+}
+
+
 
 function resetPaginationParameters(currentUri) {
     var newUri = []
@@ -4386,7 +4525,7 @@ function loadTagTreemap() {
     });
 }
 
-function selectAllInbetween(last, current) {
+function selectAllInBetween(last, current) {
     if (last === false || last === current) {
         return false;
     }
@@ -5071,7 +5210,7 @@ $(document).ready(function () {
 });
 
 function destroyPopovers($element) {
-    $element.find('[data-dismissid]').each(function() {
+    $element.find('[data-dismissId]').each(function() {
         $(this).popover('destroy');
     });
 }
@@ -5387,6 +5526,15 @@ function checkRoleEnforceRateLimit() {
     }
 }
 
+function toggleIsRestsearchLimitedField() {
+    if ($('#RoleIsRestsearchLimited').is(':checked')) {
+        $('#restsearchLimitValueContainer').show();
+    } else {
+        $('#restsearchLimitValueContainer').hide();
+    }
+}
+
+
 function queryDeprecatedEndpointUsage() {
     $.ajax({
         url: baseurl + '/api/viewDeprecatedFunctionUse',
@@ -5420,74 +5568,39 @@ function submitDashboardForm(id) {
         configData = {};
     }
     configData = JSON.stringify(configData);
-    $('#' + id).attr('config', configData);
+    $('#' + id).closest('.grid-stack-item').attr('config', configData);
     $('#genericModal').modal('hide');
-    saveDashboardState();
-}
-
-function submitDashboardAddWidget() {
-    var widget = $('#DashboardWidget').val();
-    var config = $('#DashboardConfig').val();
-    var width = $('#DashboardWidth').val();
-    var height = $('#DashboardHeight').val();
-    var el = null;
-    var k = $('#last-element-counter').data('element-counter');
-
-    if (config === '') {
-        config = '[]'
-    }
-    try {
-        config = JSON.parse(config);
-    } catch (error) {
-        showMessage('fail', error.message)
-        return
-    }
-    config = JSON.stringify(config);
-
-    $.ajax({
-        url: baseurl + '/dashboards/getEmptyWidget/' + widget + '/' + (k+1),
-        type: 'GET',
-        success: function(data) {
-            el = data;
-            grid.addWidget(
-                el,
-                {
-                    "width": width,
-                    "height": height,
-                    "autoposition": 1
-                }
-            );
-            $('#widget_' + (k+1)).attr('config', config);
-            $('#last-element-counter').data('element-counter', (k+1));
-        },
-        complete: function(data) {
-            $('#genericModal').modal('hide');
-        },
-        error: function(data) {
-            handleGenericAjaxResponse({'saved':false, 'errors':['Could not fetch empty widget.']});
-        }
-    });
+    resetDashboardGrid(grid, true);
 }
 
 function saveDashboardState() {
     var dashBoardSettings = [];
+
     $('.grid-stack-item').each(function() {
-        if ($(this).attr('config') !== undefined && $(this).attr('widget') !== undefined) {
-            var config = $(this).attr('config');
-            config = JSON.parse(config);
-            var temp = {
-                'widget': $(this).attr('widget'),
-                'config': config,
-                'position': {
-                    'x': $(this).attr('data-gs-x'),
-                    'y': $(this).attr('data-gs-y'),
-                    'width': $(this).attr('data-gs-width'),
-                    'height': $(this).attr('data-gs-height')
-                }
-            };
-            dashBoardSettings.push(temp);
-        }
+        var $item    = $(this);
+        var $wrapper = $item.find('.widget-wrapper').first();
+
+        if ($wrapper.length === 0) return;
+        console.log($wrapper.attr('config'));
+        var configAttr = $item.attr('config');
+        var widgetAttr = $wrapper.attr('widget');
+
+        if (!configAttr || !widgetAttr) return;
+
+        var temp = {
+            widget: widgetAttr,
+            config: JSON.parse(configAttr),
+            position: {
+                x: $item.attr('gs-x'),
+                y: $item.attr('gs-y'),
+                width:  $item.attr('gs-w'),
+                height: $item.attr('gs-h')
+            }
+        };
+
+        dashBoardSettings.push(temp);
     });
+
     var url = baseurl + '/dashboards/updateSettings'
     fetchFormDataAjax(url, function(formData) {
         var $formContainer = $(formData)
@@ -5498,37 +5611,13 @@ function saveDashboardState() {
             success:function () {
                 showMessage('success', 'Dashboard settings saved.');
             },
-            beforeSend:function() {
-            },
             type:"post",
             url: $theForm.attr('action')
         });
     })
 }
 
-function updateDashboardWidget(element) {
-    var $element = $(element);
-    if ($element.length) {
-        var container_id = $element.attr('id').substring(7);
-        var container = $element.find('.widgetContent');
-        var titleText = $element.find('.widgetTitleText');
-        var temp = JSON.parse($element.attr('config'));
-        if (temp['alias'] !== undefined) {
-            titleText.text(temp['alias']);
-        }
-        $.ajax({
-            type: 'POST',
-            url: baseurl + '/dashboards/renderWidget/' + container_id,
-            data: {
-                config: $element.attr('config'),
-                widget: $element.attr('widget')
-            },
-            success:function (data) {
-                container.html(data);
-            }
-        });
-    }
-}
+
 
 function resetDashboardGrid(grid, save = true) {
     $('.grid-stack-item').each(function() {
@@ -5537,44 +5626,71 @@ function resetDashboardGrid(grid, save = true) {
     if (save) {
         saveDashboardState();
     }
-    $('.edit-widget').click(function() {
-        var el = $(this).closest('.grid-stack-item');
+    $(document).on('click', '.edit-widget', function (e) {
+        e.preventDefault();
+
+        var wrapper = $(this).closest('.widget-wrapper');
+        var item    = wrapper.closest('.grid-stack-item');
+
         var data = {
-            id: el.attr('id'),
-            config: JSON.parse(el.attr('config')),
-            widget: el.attr('widget'),
-            alias: el.attr('alias')
-        }
+            id: wrapper.attr('id'),
+            config: JSON.parse(item.attr('config') || '{}'),
+            widget: item.attr('widget'),
+            alias: item.attr('alias')
+        };
+
         openGenericModalPost(baseurl + '/dashboards/getForm/edit', data);
     });
-    $('.remove-widget').click(function() {
-        var el = $(this).closest('.grid-stack-item');
-        grid.removeWidget(el);
-        saveDashboardState();
+
+    $(document).on('click', '.remove-widget', function (e) {
+        e.preventDefault();
+
+        var gridItem = $(this).closest('.grid-stack-item').get(0);
+        if (gridItem && grid) {
+            grid.removeWidget(gridItem);
+            if (typeof saveDashboardState === 'function') {
+                saveDashboardState();
+            }
+        }
     });
-    $('.widget-export-menu').find('a[data-exporttype]').click(function() {
-        var $element = $(this).closest('div[widget]');
-        var container_id = $element.attr('id').substring(7);
-        var export_type = $(this).data('exporttype')
-          $.ajax({
+    $(document).on('click', '.widget-export-menu a[data-exporttype]', function(e) {
+        e.preventDefault();
+
+        var $link    = $(this);
+        var $item    = $link.closest('.grid-stack-item');                 // metadata lives here
+        var $wrapper = $link.closest('.grid-stack-item').find('.widget-wrapper').first(); // id lives here
+
+        var export_type = $link.data('exporttype');
+
+        var widget = $item.attr('widget');
+        var config = $item.attr('config') || '[]';
+
+        if (!widget) return;
+
+        var wrapperId = $wrapper.attr('id') || '';
+        if (!wrapperId.startsWith('widget_')) return;
+
+        var container_id = wrapperId.substring(7);
+
+        $.ajax({
             type: 'POST',
             url: baseurl + '/dashboards/renderWidget/' + container_id + '/export' + export_type + ':1',
             data: {
-                config: $element.attr('config'),
-                widget: $element.attr('widget')
+                config: config,
+                widget: widget
             },
-            success:function (data) {
-                if (export_type == 'json') {
+            success: function (data) {
+                if (export_type === 'json') {
                     data = JSON.stringify(data, null, 2);
                 }
-                var blob = new Blob([data], { type: (export_type == 'json' ? 'application/json' : 'text/csv') });
-                var link=window.document.createElement('a');
-                link.href=window.URL.createObjectURL(blob);
-                link.download=$element.attr('widget') + "_" + container_id + "_export." + export_type;
+                var blob = new Blob([data], { type: (export_type === 'json' ? 'application/json' : 'text/csv') });
+                var link = window.document.createElement('a');
+                link.href = window.URL.createObjectURL(blob);
+                link.download = widget + "_" + container_id + "_export." + export_type;
                 link.click();
             }
         });
-    })
+    });
 }
 
 function setHomePage() {
@@ -5691,7 +5807,7 @@ function redirectIdSelection(scope, action) {
     if (id.length > 0) {
         window.location = baseurl + '/' + scope + '/' + action + '/' + id
     } else {
-        showMessage('fail', 'Not an valid event id');
+        showMessage('fail', 'Not a valid event id');
     }
 }
 
@@ -5940,4 +6056,74 @@ function filterSearch(callback) {
             $div.remove();
         });
     });
+}
+
+function submitLogSearch() {
+    var url = baseurl + '/logs/index';
+    $('.log-search-field').each(function() {
+        if ($(this).val() !== '') {
+            url += '/' + encodeURIComponent($(this).data('field')) + ':' + encodeURIComponent($(this).val().replace("/", ""));
+        }
+    });
+    $(location).prop('href', url);
+}
+
+function taskFormUpdate() {
+    $('.optionalField').hide();
+    switch($('#TaskType').val()) {
+        case 'Server':
+            $('#ServerAction').show();
+            $('#Server').show();
+            $('#ServerTechnique').show();
+            break;
+        case 'Feed':
+            $('#FeedAction').show();
+            $('#Feed').show();
+            if ($('#TaskFeedAction').val() === 'cache' && $('#TaskFeedId').val() === 'all') {
+                $('#FeedScope').show();
+            }else{
+                $('#FeedScope').hide();
+            }
+            break;
+        case 'Workflow':
+            $('#Workflow').show();
+            break;
+        case 'Admin':
+            $('#AdminAction').show();
+            break;
+        }
+}
+function sanitizeUrlForTraversal(url) {
+    // First decode repeatedly to expose double-encoding etc.
+    let decoded = url;
+    for (let i = 0; i < 3; i++) {
+        try {
+            decoded = decodeURIComponent(decoded);
+        } catch (e) { break; }
+    }
+
+    // Normalise slashes (decode %2f etc.)
+    decoded = decoded
+        .replace(/%2f/gi, '/')
+        .replace(/%5c/gi, '\\');
+
+    // Collapse repeated slashes to reveal hidden traversal
+    const collapsed = decoded.replace(/\/{2,}/g, '/');
+
+    // Strict traversal detection
+    const traversalPattern =
+        /(^|\/)(\.\.|%2e%2e|%2e\.|\.%2e|%252e%252e)(\/|$)/i;
+
+    // Also block multi-dot padding attempts: ".../" which reduces to "../"
+    const dotPaddingPattern = /(^|\/)\.{3,}/;
+
+    // Any form of traversal found? Reject.
+    if (traversalPattern.test(decoded) ||
+        traversalPattern.test(collapsed) ||
+        dotPaddingPattern.test(decoded) ||
+        dotPaddingPattern.test(collapsed)) {
+        throw new Error("Unsafe URL: path traversal detected");
+    }
+
+    return url;
 }

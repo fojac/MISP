@@ -17,11 +17,9 @@ class WorkflowsController extends AppController
         $requirementErrors = [];
         if (empty(Configure::read('MISP.background_jobs'))) {
             $requirementErrors[] = __('Background workers must be enabled to use workflows');
-            $this->render('error');
         }
         if (empty(Configure::read('Plugin.Workflow_enable'))) {
-            $requirementErrors[] = __('The workflow plugin must be enabled to use workflows. Go to `/servers/serverSettings/Plugin` the enable the `Plugin.Workflow` setting');
-            $this->render('error');
+            $requirementErrors[] = __('The workflow plugin must be enabled to use workflows. Go to `/servers/serverSettings/Plugin` and enable the `Plugin.Workflow` setting');
         }
         try {
             $this->Workflow->setupRedisWithException();
@@ -153,7 +151,7 @@ class WorkflowsController extends AppController
             $trigger_ids = Hash::extract($modules['modules_trigger'], '{n}.id');
             if (!in_array($trigger_id, $trigger_ids)) {
                 return $this->__getFailResponseBasedOnContext(
-                    [__('Unkown trigger %s', $trigger_id)],
+                    [__('Unknown trigger %s', $trigger_id)],
                     null,
                     'add',
                     $trigger_id,
@@ -221,7 +219,7 @@ class WorkflowsController extends AppController
                 $errorMessage = implode(', ', $blockingErrors);
                 $this->Workflow->loadLog()->createLogEntry('SYSTEM', $logging['action'], $logging['model'], $logging['id'], $logging['message'], __('Returned message: %s', $errorMessage));
             }
-            if ($this->_isRest()) {
+            if ($this->_isRest() || $this->request->is('ajax')) {
                 return $this->RestResponse->viewData([
                     'success' => $result['success'],
                     'outcome' => $result['outcomeText'],

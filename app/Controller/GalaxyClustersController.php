@@ -10,7 +10,7 @@ class GalaxyClustersController extends AppController
 
     public $paginate = array(
         'limit' => 60,
-        'maxLimit' => 9999, // LATER we will bump here on a problem once we have more than 9999 events <- no we won't, this is the max a user van view/page.
+        'maxLimit' => 9999, // LATER we will bump here on a problem once we have more than 9999 events <- no we won't, this is the max a user can view/page.
         'recursive' => -1,
         'order' => array(
             'GalaxyCluster.version' => 'DESC',
@@ -77,14 +77,15 @@ class GalaxyClustersController extends AppController
             $searchall = '%' . strtolower($filters['searchall']) . '%';
             $synonym_hits = $this->GalaxyCluster->GalaxyElement->find(
                 'list',
-                array(
+                [
                     'recursive' => -1,
-                    'conditions' => array(
-                        'LOWER(GalaxyElement.value) LIKE' => $searchall,
-                        'GalaxyElement.key' => 'synonyms' ),
-                        'fields' => array(
-                            'GalaxyElement.galaxy_cluster_id')
-                        )
+                    'conditions' => [
+                        'LOWER(GalaxyElement.value) LIKE' => $searchall
+                    ],
+                    'fields' => [
+                        'GalaxyElement.galaxy_cluster_id'
+                    ]
+                ]
             );
             $searchConditions = array(
                 'OR' => array(
@@ -101,6 +102,11 @@ class GalaxyClustersController extends AppController
             $clusters = $this->GalaxyCluster->find(
                 'all',
                 array(
+                    'contain' => [
+                        'Galaxy' => [
+                            'fields' => ['id', 'uuid', 'name', 'type', 'namespace', 'version', 'description', 'default']
+                        ]
+                    ],
                     'conditions' => array(
                         'AND' => array($contextConditions, $searchConditions, $aclConditions)
                     ),
@@ -188,6 +194,7 @@ class GalaxyClustersController extends AppController
         ));
         if (!empty($tag)) {
             $cluster['GalaxyCluster']['tag_count'] = $this->GalaxyCluster->Tag->EventTag->countForTag($tag['Tag']['id'], $this->Auth->user());
+            $cluster['GalaxyCluster']['tag_att_count'] = $this->GalaxyCluster->Tag->AttributeTag->countForTag($tag['Tag']['id'], $this->Auth->user());
             $cluster['GalaxyCluster']['tag_id'] = $tag['Tag']['id'];
         }
         if ($this->_isRest()) {
@@ -228,6 +235,7 @@ class GalaxyClustersController extends AppController
         if (empty($galaxy)) {
             throw new NotFoundException(__('Invalid galaxy'));
         }
+        $galaxyId = $galaxy['Galaxy']['id'];
         $this->loadModel('MispAttribute');
         $distributionLevels = $this->MispAttribute->distributionLevels;
         unset($distributionLevels[5]);
@@ -237,7 +245,6 @@ class GalaxyClustersController extends AppController
             $initialDistribution = $configuredDistribution;
         }
         $this->loadModel('SharingGroup');
-        $sgs = $this->SharingGroup->fetchAllAuthorised($this->Auth->user(), 'name', 1);
 
         if (isset($this->params['named']['forkUuid'])) {
             $forkUuid = $this->params['named']['forkUuid'];
@@ -277,6 +284,12 @@ class GalaxyClustersController extends AppController
             }
             $cluster['GalaxyCluster']['galaxy_id'] = $galaxyId;
             $cluster['GalaxyCluster']['published'] = false;
+            if (isset($cluster['GalaxyCluster']['distribution']) && $cluster['GalaxyCluster']['distribution'] == 4) {
+                $canSGBeUsed = $this->SharingGroup->checkIfCanBeUsed($this->Auth->user(), $this->_isRest(), $cluster, 'GalaxyCluster');
+                if ($canSGBeUsed !== true) {
+                    throw new MethodNotAllowedException($canSGBeUsed);
+                }
+            }
             $errors = array();
             if (empty($cluster['GalaxyCluster']['elements'])) {
                 if (empty($cluster['GalaxyCluster']['GalaxyElement'])) {
@@ -349,6 +362,7 @@ class GalaxyClustersController extends AppController
         $this->set('galaxy_id', $galaxyId);
         $this->set('distributionLevels', $distributionLevels);
         $this->set('initialDistribution', $initialDistribution);
+        $sgs = $this->SharingGroup->fetchAllAuthorised($this->Auth->user(), 'name', 1);
         $this->set('sharingGroups', $sgs);
         $this->set('action', 'add');
     }
@@ -373,11 +387,10 @@ class GalaxyClustersController extends AppController
             $initialDistribution = $configuredDistribution;
         }
         $this->loadModel('SharingGroup');
-        $sgs = $this->SharingGroup->fetchAllAuthorised($this->Auth->user(), 'name', 1);
 
         if (!empty($cluster['GalaxyCluster']['extends_uuid'])) {
             $forkedCluster = $this->GalaxyCluster->fetchGalaxyClusters($this->Auth->user(), array(
-                'conditions' => array('uuid' => $cluster['GalaxyCluster']['extends_uuid']),
+                'conditions' => array('GalaxyCluster.uuid' => $cluster['GalaxyCluster']['extends_uuid']),
             ), false);
         } else {
             $forkedCluster = array();
@@ -403,6 +416,12 @@ class GalaxyClustersController extends AppController
                 $cluster['GalaxyCluster']['id'] = $id;
             }
 
+            if (isset($cluster['GalaxyCluster']['distribution']) && $cluster['GalaxyCluster']['distribution'] == 4) {
+                $canSGBeUsed = $this->SharingGroup->checkIfCanBeUsed($this->Auth->user(), $this->_isRest(), $cluster, 'GalaxyCluster');
+                if ($canSGBeUsed !== true) {
+                    throw new MethodNotAllowedException($canSGBeUsed);
+                }
+            }
             if (empty($cluster['GalaxyCluster']['elements'])) {
                 if (empty($cluster['GalaxyCluster']['GalaxyElement'])) {
                     $cluster['GalaxyCluster']['GalaxyElement'] = array();
@@ -474,6 +493,7 @@ class GalaxyClustersController extends AppController
         $this->set('fieldDesc', $fieldDesc);
         $this->set('distributionLevels', $distributionLevels);
         $this->set('initialDistribution', $initialDistribution);
+        $sgs = $this->SharingGroup->fetchAllAuthorised($this->Auth->user(), 'name', 1);
         $this->set('sharingGroups', $sgs);
         $this->set('galaxy_id', $cluster['GalaxyCluster']['galaxy_id']);
         $this->set('clusterId', $id);
@@ -609,7 +629,7 @@ class GalaxyClustersController extends AppController
             $galaxyId = $cluster['GalaxyCluster']['galaxy_id'];
             if ($result) {
                 $message = __(
-                    'Galaxy cluster successfuly %s deleted%s.',
+                    'Galaxy cluster successfully %s deleted%s.',
                     $hard ? __('hard') : __('soft'),
                     $hard ? __(' and added to the block list') : ''
                 );
@@ -646,7 +666,7 @@ class GalaxyClustersController extends AppController
             $result = $this->GalaxyCluster->restoreCluster($cluster['GalaxyCluster']['id']);
             $galaxyId = $cluster['GalaxyCluster']['galaxy_id'];
             if ($result) {
-                $message = __('Galaxy cluster successfuly restored.');
+                $message = __('Galaxy cluster successfully restored.');
                 if ($this->_isRest()) {
                     return $this->RestResponse->saveSuccessResponse('GalaxyCluster', 'restore', $cluster['GalaxyCluster']['id'], $this->response->type());
                 } else {
@@ -701,7 +721,7 @@ class GalaxyClustersController extends AppController
         }
 
         $cluster = $this->GalaxyCluster->fetchGalaxyClusters($this->Auth->user(), array(
-            'conditions' => array('id' => $id)
+            'conditions' => array('GalaxyCluster.id' => $id)
         ), $full=false);
         if (empty($cluster)) {
             throw new MethodNotAllowedException("Invalid Galaxy Cluster.");
@@ -812,7 +832,7 @@ class GalaxyClustersController extends AppController
         }
         $this->set('pickingMode', false);
         $this->set('defaultTabName', 'mitre-enterprise-attack');
-        $this->set('removeTrailling', 2);
+        $this->set('removeTrailing', 2);
         $this->render('cluster_matrix');
     }
 
@@ -919,9 +939,10 @@ class GalaxyClustersController extends AppController
         $this->set('includeInbound', $includeInbound);
         $this->loadModel('MispAttribute');
         $distributionLevels = $this->MispAttribute->distributionLevels;
-        unset($distributionLevels[4]);
         unset($distributionLevels[5]);
         $this->set('distributionLevels', $distributionLevels);
+        $sgs = $this->GalaxyCluster->SharingGroup->fetchAllAuthorised($this->Auth->user(), 'name', 1);
+        $this->set('sharingGroups', $sgs);
     }
 
     /**

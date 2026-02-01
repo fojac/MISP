@@ -32,7 +32,7 @@ class AnalystDataController extends AppController
         $dropdownData['distributionLevels'] = $this->Event->distributionLevels;
         $this->set('initialDistribution', Configure::read('MISP.default_event_distribution'));
         $dropdownData['sgs'] = $this->Event->SharingGroup->fetchAllAuthorised($this->Auth->user(), 'name', 1);
-        $dropdownData['valid_targets'] = array_combine($this->AnalystData->valid_targets, $this->AnalystData->valid_targets);
+        $dropdownData['valid_targets'] = array_combine($this->AnalystData::valid_targets, $this->AnalystData::valid_targets);
         $this->set(compact('dropdownData'));
         $this->set('modelSelection', $this->modelSelection);
         $this->set('distributionLevels', $this->Event->distributionLevels);
@@ -56,6 +56,15 @@ class AnalystDataController extends AppController
         $this->loadModel('Event');
         $currentUser = $this->Auth->user();
         $params = [
+            'beforeSave' => function(array $analystData) use ($currentUser) {
+                if (isset($analystData[$this->modelSelection]['distribution']) && $analystData[$this->modelSelection]['distribution'] == 4) {
+                    $canSGBeUsed = $this->Event->SharingGroup->checkIfCanBeUsed($currentUser, $this->_isRest(), $analystData, $this->modelSelection);
+                    if ($canSGBeUsed !== true) {
+                        throw new MethodNotAllowedException($canSGBeUsed);
+                    }
+                }
+                return $analystData;
+            },
             'afterSave' => function (array $analystData) use ($currentUser) {
                 $this->Event->captureAnalystData($currentUser, $this->request->data[$this->modelSelection], $this->modelSelection, $analystData[$this->modelSelection]['uuid']);
             }
@@ -97,7 +106,13 @@ class AnalystDataController extends AppController
                 }
                 return $analystData;
             },
-            'beforeSave' => function(array $analystData): array {
+            'beforeSave' => function (array $analystData) use ($currentUser): array {
+                if (isset($analystData[$this->modelSelection]['distribution']) && $analystData[$this->modelSelection]['distribution'] == 4) {
+                    $canSGBeUsed = $this->Event->SharingGroup->checkIfCanBeUsed($currentUser, $this->_isRest(), $analystData, $this->modelSelection);
+                    if ($canSGBeUsed !== true) {
+                        throw new MethodNotAllowedException($canSGBeUsed);
+                    }
+                }
                 $analystData[$this->modelSelection]['modified'] = date('Y-m-d H:i:s');
                 return $analystData;
             },
@@ -185,7 +200,7 @@ class AnalystDataController extends AppController
             $id = $this->AnalystData->getIDFromUUID($type, $id);
         }
 
-        $this->AnalystData->fetchRecursive = true;
+        $this->AnalystData->fetchRecursive = false;
         $conditions = $this->AnalystData->buildConditions($this->Auth->user());
         $this->CRUD->view($id, [
             'conditions' => $conditions,
@@ -194,15 +209,23 @@ class AnalystDataController extends AppController
                 if (!$this->request->is('ajax')) {
                     unset($analystData[$this->modelSelection]['_canEdit']);
                 }
-                $children = $this->AnalystData->fetchChildNotesAndOpinions($this->Auth->user(), $analystData[$this->modelSelection], $this->_isRest(), 1);
-                foreach ($children as $child) {
-                    foreach ($child as $childType => $childData) {
-                        $analystData[$this->modelSelection][$childType][] = $childData;
-                    }
+                if ($this->_isRest()) {
+                    $children = $this->AnalystData->fetchChildNotesAndOpinions($this->Auth->user(), $analystData[$this->modelSelection], true, 5);
+                    if (!empty($children)) {
+                        foreach ($children as $child) {
+                            foreach ($child as $childType => $childData) {
+                                $analystData[$this->modelSelection][$childType][] = $childData;
+                            }
+                        }
+                    }    
+                } else {
+                    $children = $this->AnalystData->fetchChildNotesAndOpinions($this->Auth->user(), $analystData[$this->modelSelection], false, 1);
+                    $analystData[$this->modelSelection] = $analystData[$this->modelSelection] + $children;
                 }
                 return $analystData;
             }
         ]);
+
         if ($this->IndexFilter->isRest()) {
             return $this->restResponsePayload;
         }
@@ -218,11 +241,13 @@ class AnalystDataController extends AppController
     public function index($type = 'Note')
     {
         $this->__typeSelector($type);
-
+        if (isset($this->request->data[$type])) {
+            $this->request->data = $this->request->data[$type];
+        }
         $conditions = $this->AnalystData->buildConditions($this->Auth->user());
         $params = [
-            'filters' => ['uuid', 'target_object'],
-            'quickFilters' => ['name'],
+            'filters' => array_merge(['uuid', 'target_object'], $this->AnalystData::SEARCHABLE_FIELDS),
+            'quickFilters' => $this->AnalystData::SEARCHABLE_FIELDS,
             'conditions' => $conditions,
             'afterFind' => function(array $data) {
                 foreach ($data as $i => $analystData) {

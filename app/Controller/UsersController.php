@@ -26,8 +26,6 @@ class UsersController extends AppController
 
     public function beforeFilter()
     {
-        parent::beforeFilter();
-
         // what pages are allowed for non-logged-in users
         $allowedActions = array('login', 'logout', 'getGpgPublicKey', 'logout401', 'otp', 'heartbeat');
         if (!empty(Configure::read('Security.allow_password_forgotten'))) {
@@ -41,6 +39,8 @@ class UsersController extends AppController
             $allowedActions[] = 'register';
         }
         $this->Auth->allow($allowedActions);
+
+        parent::beforeFilter();
     }
 
     public function view($id = null)
@@ -346,6 +346,9 @@ class UsersController extends AppController
             'conditions' => array('User.id' => $id),
             'recursive' => -1
         ));
+        $this->loadModel('Server');
+        $this->set('complexity', !empty(Configure::read('Security.password_policy_complexity')) ? Configure::read('Security.password_policy_complexity') : $this->Server->serverSettings['Security']['password_policy_complexity']['value']);
+        $this->set('length', !empty(Configure::read('Security.password_policy_length')) ? Configure::read('Security.password_policy_length') : $this->Server->serverSettings['Security']['password_policy_length']['value']);
         if ($this->request->is('post') || $this->request->is('put')) {
             $abortPost = false;
             return $this->__pw_change($user, 'change_pw', $abortPost);
@@ -353,9 +356,7 @@ class UsersController extends AppController
         if ($this->_isRest()) {
             return $this->RestResponse->describe('Users', 'change_pw', false, $this->response->type());
         }
-        $this->loadModel('Server');
-        $this->set('complexity', !empty(Configure::read('Security.password_policy_complexity')) ? Configure::read('Security.password_policy_complexity') : $this->Server->serverSettings['Security']['password_policy_complexity']['value']);
-        $this->set('length', !empty(Configure::read('Security.password_policy_length')) ? Configure::read('Security.password_policy_length') : $this->Server->serverSettings['Security']['password_policy_length']['value']);
+    
         $this->User->recursive = 0;
         $this->User->read(null, $id);
         $this->User->set('password', '');
@@ -731,6 +732,9 @@ class UsersController extends AppController
             if (Configure::read('CustomAuth_enable') && Configure::read('CustomAuth_required')) {
                 $this->request->data['User']['change_pw'] = 0;
             }
+            if (Configure::read('MISP.disable_user_password_change')) {
+                $this->request->data['User']['change_pw'] = 0;
+            }
             $this->request->data['User']['newsread'] = 0;
             if (!$this->_isSiteAdmin()) {
                 $this->request->data['User']['org_id'] = $this->Auth->user('org_id');
@@ -868,12 +872,13 @@ class UsersController extends AppController
         $userToEdit = $this->User->find('first', array(
             'conditions' => $this->__adminFetchConditions($id),
             'recursive' => -1,
-            'fields' => array('User.id', 'User.role_id', 'User.email', 'User.org_id', 'Role.perm_site_admin'),
+            'fields' => array('User.*', 'Role.perm_site_admin'),
             'contain' => array('Role')
         ));
         if (empty($userToEdit)) {
             throw new NotFoundException(__('Invalid user'));
         }
+        $userToEdit['User']['password'] = '';
         if (!$this->_isSiteAdmin()) {
             // Org admins should be able to select the role that is already assigned to an org user when editing them.
             // What happened previously:
@@ -1051,6 +1056,9 @@ class UsersController extends AppController
                     $this->User->extralog($this->Auth->user(), "edit", "user", $fieldsResult, $user);
                     if ($this->_isRest()) {
                         $user['User']['password'] = '******';
+                        if (!empty($user['User']['totp'])) {
+                            $user['User']['totp'] = '******';
+                        }
                         if (!empty(Configure::read('Security.advanced_authkeys'))) {
                             unset($user['User']['authkey']);
                         }
@@ -1071,12 +1079,10 @@ class UsersController extends AppController
             if ($this->_isRest()) {
                 return $this->RestResponse->describe('Users', 'admin_edit', $id, $this->response->type());
             }
-            $this->User->read(null, $id);
-            if (!$this->_isSiteAdmin() && $this->Auth->user('org_id') != $this->User->data['User']['org_id']) {
+            if (!$this->_isSiteAdmin() && $this->Auth->user('org_id') != $userToEdit['User']['org_id']) {
                 $this->redirect(array('controller' => 'users', 'action' => 'index', 'admin' => true));
             }
-            $this->User->set('password', '');
-            $this->request->data = $this->User->data;
+            $this->request->data = $userToEdit;
         }
         if ($this->_isSiteAdmin()) {
             $orgs = $this->User->Organisation->find('list', array(
@@ -1262,7 +1268,7 @@ class UsersController extends AppController
             $this->_postlogin();
         } else {
             // don't display authError before first login attempt
-            if (str_replace("//", "/", $this->webroot . $this->Session->read('Auth.redirect')) == $this->webroot && $this->Session->read('Message.auth.message') == $this->Auth->authError) {
+            if (str_replace("//", "/", $this->webroot . $this->Session->read('Auth.redirect')) == $this->webroot && $this->Session->read('Message.auth.0.message') == $this->Auth->authError) {
                 $this->Session->delete('Message.auth');
             }
             // Login was failed, do everything that is needed such as blocklisting, logging and more
@@ -1285,7 +1291,7 @@ class UsersController extends AppController
         if (empty($authUser['disabled'])) {
             $this->User->extralog($authUser, "login");
         }
-        
+
         $this->User->Behaviors->disable('SysLogLogable.SysLogLogable');
         $user = $this->User->find('first', array(
             'conditions' => array(
@@ -1296,10 +1302,14 @@ class UsersController extends AppController
         ));
         // update login timestamp and welcome user
         if (empty($authUser['disabled'])) {
-            $this->User->updateLoginTimes($user['User']);
+            $updatedUser = $this->User->updateLoginTimes($user['User']);
+            if ($updatedUser) {
+                $user['User'] = $updatedUser['User'];
+            }
         }
         $this->User->Behaviors->enable('SysLogLogable.SysLogLogable');
 
+        // Show the last login timestamp (which was updated by updateLoginTimes)
         $lastUserLogin = $user['User']['last_login'];
         if ($lastUserLogin) {
             $readableDatetime = (new DateTime())->setTimestamp($lastUserLogin)->format('D, d M y H:i:s O'); // RFC822
@@ -1793,6 +1803,7 @@ class UsersController extends AppController
                 $fieldsDescrStr = 'User (' . $user['id'] . '): ' . $user['email']. ' wrong OTP token';
                 $this->User->extralog($user, "login_fail", $fieldsDescrStr, '');
                 $this->Bruteforce->insert($user['email']);
+                $this->request->data['User']['otp'] = '';
             }
         }
         // GET Request or wrong OTP, just show the form
@@ -1854,7 +1865,7 @@ class UsersController extends AppController
         if ($this->request->is('get')) {
             $totp = \OTPHP\TOTP::create();
             $secret = $totp->getSecret();
-            $this->Session->write('otp_secret', $secret);  // Store in session, we want to create a new secret each time the totp_new() function is queried via a GET (this will not impede incorrect confirmation attempty)
+            $this->Session->write('otp_secret', $secret);  // Store in session, we want to create a new secret each time the totp_new() function is queried via a GET (this will not impede incorrect confirmation attempt)
         } else {
             $secret = $this->Session->read('otp_secret');  // Reload secret from session.
             if ($secret) {
@@ -1929,7 +1940,7 @@ class UsersController extends AppController
         } else {
             $this->set(
                 'question',
-                __('Are you sure you want to delete the TOTP of the user?.')
+                __('Are you sure you want to delete the TOTP of the user?')
             );
             $this->set('title', __('Delete user TOTP'));
             $this->set('actionName', 'Delete');
@@ -2105,7 +2116,7 @@ class UsersController extends AppController
         $stats['analyst_data_count'] = $this->Note->find('count', array('recursive' => -1)) +
             $this->Opinion->find('count', array('recursive' => -1)) +
             $this->Relationship->find('count', array('recursive' => -1));
-        $stats['analyst_data_count_month'] = $this->Note->find('count', array('conditions' => array('Note.modified >' => $this_month), 'recursive' => -1)) + 
+        $stats['analyst_data_count_month'] = $this->Note->find('count', array('conditions' => array('Note.modified >' => $this_month), 'recursive' => -1)) +
             $this->Opinion->find('count', array('conditions' => array('Opinion.modified >' => $this_month), 'recursive' => -1)) +
             $this->Relationship->find('count', array('conditions' => array('Relationship.modified >' => $this_month), 'recursive' => -1));
 
@@ -2507,7 +2518,7 @@ class UsersController extends AppController
             $this->set('pickingMode', false);
             if ($matrixData['galaxy']['id'] == $mitre_galaxy_id) {
                 $this->set('defaultTabName', "attack-enterprise");
-                $this->set('removeTrailling', 2);
+                $this->set('removeTrailing', 2);
             }
 
             $this->set('galaxyName', $matrixData['galaxy']['name']);
@@ -2574,12 +2585,12 @@ class UsersController extends AppController
             throw new NotFoundException("Public key not found.");
         }
 
-        list($fingeprint, $publicKey) = $key;
+        list($fingerprint, $publicKey) = $key;
         $response = new CakeResponse(array(
             'body' => $publicKey,
             'type' => 'text/plain',
         ));
-        $response->download($fingeprint . '.asc');
+        $response->download($fingerprint . '.asc');
         return $response;
     }
 
@@ -3007,7 +3018,7 @@ class UsersController extends AppController
 
     private function __canChangePassword()
     {
-        return $this->ACL->canUserAccess($this->Auth->user(), 'users', 'change_pw');
+        return $this->_isSiteAdmin() || $this->ACL->canUserAccess($this->Auth->user(), 'users', 'change_pw');
     }
 
     private function __canChangeLogin()
@@ -3285,5 +3296,17 @@ class UsersController extends AppController
     {
         $payload = $this->User::HEARTBEAT_MESSAGES[rand(0, count($this->User::HEARTBEAT_MESSAGES)-1)];
         return $this->RestResponse->viewData($payload, 'json');
+    }
+
+    public function userIp($user)
+    {
+        $result = $this->User->userIP($user);
+        return $this->RestResponse->viewData($result['User'], 'json');
+    }
+
+    public function ipUser($ip)
+    {
+        $result = $this->User->ipUser($ip);
+        return $this->RestResponse->viewData($result, 'json');
     }
 }

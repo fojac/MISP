@@ -125,6 +125,9 @@ class JSONConverterTool
                 }
             }
         }
+        if (isset($event['Event']['EventReport'])) {
+            $event['Event']['EventReport'] = self::__cleanEventReports($event['Event']['EventReport']);
+        }
         unset($tempSightings);
         unset($event['Event']['RelatedAttribute']);
 
@@ -143,7 +146,7 @@ class JSONConverterTool
         if ($raw) {
             return $result;
         }
-        return json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return JsonTool::encode($result, true);
     }
 
     /**
@@ -155,11 +158,11 @@ class JSONConverterTool
     {
         $event = self::convert($event, false, true);
 
-        // Fast and inaccurate way how to check if event is too big for to convert in one call. This can be changed in future.
+        // Fast and inaccurate way to check if event is too big to convert in one call. This can be changed in future.
         $isBigEvent = (isset($event['Event']['Attribute']) ? count($event['Event']['Attribute']) : 0) +
             (isset($event['Event']['Object']) ? count($event['Event']['Object']) : 0) > 100;
         if (!$isBigEvent) {
-            yield json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            yield JsonTool::encode($event);
             return;
         }
         yield '{"Event":{';
@@ -180,6 +183,31 @@ class JSONConverterTool
             yield '},"errors":' . json_encode($event['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '}';
         } else {
             yield "}}";
+        }
+    }
+
+    /**
+     * Converts event to given TmpFile
+     * @param array $event
+     * @param TmpFileTool $tmpFile
+     * @param bool $prettyPrint
+     * @return void
+     * @throws Exception
+     */
+    public static function convertToTmpFile(array $event, TmpFileTool $tmpFile, $prettyPrint = false)
+    {
+        if (function_exists('simdjson_encode_to_stream')) {
+            $converted = self::convert($event, false, true);
+            simdjson_encode_to_stream($converted, $tmpFile->resource(), $prettyPrint ? SIMDJSON_PRETTY_PRINT : 0);
+            return;
+        }
+
+        if ($prettyPrint) {
+            $tmpFile->write(self::convert($event));
+        } else {
+            foreach (self::streamConvert($event) as $part) {
+                $tmpFile->write($part);
+            }
         }
     }
 
@@ -204,6 +232,23 @@ class JSONConverterTool
             }
         }
         return $attributes;
+    }
+
+    private static function __cleanEventReports($eventReports)
+    {
+        foreach ($eventReports as $key => $eventReport) {
+            if (empty($eventReport['SharingGroup'])) {
+                unset($eventReports[$key]['SharingGroup']);
+            }
+            if (isset($eventReports[$key]['EventReportTag'])) {
+                foreach ($eventReport['EventReportTag'] as $erk => $tag) {
+                    unset($tag['Tag']['org_id']);
+                    $eventReports[$key]['Tag'][$erk] = $tag['Tag'];
+                }
+                unset($eventReports[$key]['EventReportTag']);
+            }
+        }
+        return $eventReports;
     }
 
     private static function __cleanObjects($objects, $tempSightings = array())

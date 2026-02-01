@@ -118,6 +118,10 @@ class Workflow extends AppModel
             if (!empty($result['Workflow']['id'])) {
                 $trigger_ids = $this->__getTriggersIDPerWorkflow((int) $result['Workflow']['id']);
                 $results[$k]['Workflow']['listening_triggers'] = $this->getModuleByID($trigger_ids);
+                if (!empty($results[$k]['Workflow']['listening_triggers'])) {
+                        $enabledAdHocs = $this->getEnabledAdHocWorkflows();
+                        $results[$k]['Workflow']['enabled'] = in_array($results[$k]['Workflow']['trigger_id'], $enabledAdHocs);
+                }
             }
         }
         return $results;
@@ -278,7 +282,7 @@ class Workflow extends AppModel
         $workflow = $this->fetchWorkflow($workflow_id);
         $workflow['Workflow']['debug_enabled'] = !empty($enable);
         $result = $this->editWorkflow($workflow);
-        return empty($result['errrors']);
+        return empty($result['errors']);
     }
 
     public function toggleModules($module_ids, $enable, $is_trigger=false): int
@@ -301,8 +305,8 @@ class Workflow extends AppModel
         $workflows = $this->fetchWorkflows();
         $keys = $redis->keys(Workflow::REDIS_KEY_WORKFLOW_NAMESPACE . ':*');
         $redis->delete($keys);
-        foreach ($workflows as $wokflow) {
-            $this->updateListeningTriggers($wokflow);
+        foreach ($workflows as $workflow) {
+            $this->updateListeningTriggers($workflow);
         }
     }
 
@@ -498,13 +502,22 @@ class Workflow extends AppModel
         $startNodeID = $startNode['id'];
         $trigger_id = $startNode['data']['id'];
         if ($startNode  == -1) {
-            $blockingErrors[] = __('Invalid start node `%s`', $startNodeID);
-            return false;
+            $message = __('Invalid start node `%s`', $startNodeID);
+            $blockingErrors[] = $message;
+            return [
+                'outcomeText' => 'failure' . sprintf(' %s', $message),
+                'walkResult' => [],
+                'success' => false,
+            ];
         }
 
         $triggerModule = $this->getModuleClassByType('trigger', $trigger_id, true);
         if (!empty($triggerModule->disabled)) {
-            return true;
+            return [
+                'outcomeText' => __('Module disabled'),
+                'walkResult' => [],
+                'success' => true,
+            ];
         }
         if (!empty($triggerModule->is_adhoc)) {
             return $this->__runAdHocWorkflow($workflow, $trigger_id, $triggerModule, $startNodeID, $blockingErrors, $data);
@@ -519,9 +532,9 @@ class Workflow extends AppModel
         $graphData = !empty($workflow['Workflow']) ? $workflow['Workflow']['data'] : $workflow['data'];
         $indexed_params = $graphData[$startNodeID]['data']['indexed_params'];
         $data = $triggerModule->collectData($userForWorkflow, $indexed_params, $passedData);
-        $lastResult = ['success' => false, 'message' => __('No data collected.')];
+        $lastResult = ['success' => false, 'outcomeText' => __('No data collected.'), 'walkResult' => []];
         foreach ($data as $dataPiece) {
-            $lastResult = $this->executeWorkflowForTrigger($trigger_id, $dataPiece, $blockingErrors, true);
+            $lastResult = $this->executeWorkflowForTrigger($trigger_id, $dataPiece, $blockingErrors, true); // FIXME: reuse passed user
         }
         return $lastResult;
     }
@@ -546,7 +559,7 @@ class Workflow extends AppModel
             return true;
         }
 
-        if (empty($trigger['blocking'])) {
+        if (empty($trigger['blocking']) && Configure::read('MISP.background_jobs')) {
             $this->Job = ClassRegistry::init('Job');
             $jobId = $this->Job->createJob(
                 'SYSTEM',
@@ -571,6 +584,8 @@ class Workflow extends AppModel
             );
             return true;
         } else {
+            $initiatorUserId = Configure::check('CurrentUserId') ? Configure::read('CurrentUserId') : null;
+            Configure::write('InitiatorUserId', $initiatorUserId);
             $blockingPathExecutionSuccess = $this->executeWorkflowForTrigger($trigger_id, $data, $blockingErrors);
             return $blockingPathExecutionSuccess;
         }
@@ -690,9 +705,9 @@ class Workflow extends AppModel
     /**
      * walkGraph Walk the graph for the provided trigger and execute each nodes
      *
-     * @param array $workflow The worflow to walk
+     * @param array $workflow The workflow to walk
      * @param int $startNode The ID of the trigger to start from
-     * @param string|null $for_path If provided, execute the workflow for the provided path. If not provided, execute the worflow regardless of the path
+     * @param string|null $for_path If provided, execute the workflow for the provided path. If not provided, execute the workflow regardless of the path
      * @param array $data
      * @param array $errors
      * @return boolean If all module returned a successful response
@@ -709,8 +724,9 @@ class Workflow extends AppModel
             $errors[] = __('Could not find a valid user to run the workflow. Please set setting `MISP.host_org_id` or make sure a valid site_admin user exists.');
             return false;
         }
+        $initiatorUserId = Configure::check('CurrentUserId') ? Configure::read('CurrentUserId') : null;
         $triggerNode = $this->workflowGraphTool->extractTriggerFromWorkflow($workflow['Workflow']['data'], true);
-        $roamingData = $this->workflowGraphTool->getRoamingData($userForWorkflow, $data, $workflow, $startNode, $triggerNode);
+        $roamingData = $this->workflowGraphTool->getRoamingData($userForWorkflow, $data, $workflow, $startNode, $triggerNode, $initiatorUserId);
         $graphData = !empty($workflow['Workflow']) ? $workflow['Workflow']['data'] : $workflow['data'];
         $graphWalker = $this->workflowGraphTool->getWalkerIterator($graphData, $this, $startNode, $for_path, $roamingData);
         $preventExecutionForPaths = [];
@@ -822,9 +838,9 @@ class Workflow extends AppModel
             return false;
         }
         if (!empty($this->loaded_modules['logic'][$moduleClass->id])) { // IF module return false for the 2 output.
-            $sucessType = 'success';
+            $successType = 'success';
         } else {
-            $sucessType = $success ? 'success' : 'partial-success';
+            $successType = $success ? 'success' : 'partial-success';
         }
         $message = __('Executed node `%s`' .  PHP_EOL . 'Node `%s` (%s) from Workflow `%s` (%s) executed successfully with status: %s',
             $node['data']['id'],
@@ -832,13 +848,13 @@ class Workflow extends AppModel
             $node['id'],
             $roamingData->getWorkflow()['Workflow']['name'],
             $roamingData->getWorkflow()['Workflow']['id'],
-            $sucessType
+            $successType
         );
         $this->logExecutionIfDebug($roamingData->getWorkflow(), $message);
         $this->sendRequestToDebugEndpointIfDebug(
             $roamingData->getWorkflow(),
             $node,
-            sprintf('/exec/%s?result=%s', $moduleClass->id, $sucessType),
+            sprintf('/exec/%s?result=%s', $moduleClass->id, $successType),
             $roamingData->getData(),
             $execErrors
         );
@@ -858,7 +874,8 @@ class Workflow extends AppModel
         if (method_exists($triggerClass, 'exec')) {
             $errors = [];
             $userForWorkflow = $this->getUserForWorkflow();
-            $roamingData = $this->workflowGraphTool->getRoamingData($userForWorkflow, $data, $workflow, $startNodeID);
+            $initiatorUserId = Configure::check('CurrentUserId') ? Configure::read('CurrentUserId') : null;
+            $roamingData = $this->workflowGraphTool->getRoamingData($userForWorkflow, $data, $workflow, $startNodeID, null, $initiatorUserId);
             return $triggerClass->exec($node, $roamingData, $errors);
         }
         return true;
@@ -1235,7 +1252,7 @@ class Workflow extends AppModel
             try {
                 $reflection = new \ReflectionClass($className);
             } catch (\ReflectionException $e) {
-                $message = __('Could not load module for path %s. Could not instanciate class', $filepath);
+                $message = __('Could not load module for path %s. Could not instantiate class', $filepath);
                 $this->logException($message, $e);
                 return $message;
             }
@@ -1414,7 +1431,7 @@ class Workflow extends AppModel
         if (empty($full)) {
             return $this->find('all', [
                 'recursive' => -1,
-                'fields' => ['id', 'trigger_id', 'name'],
+                'fields' => ['id', 'trigger_id', 'name', 'enabled',],
                 'conditions' => $conditions,
                 'callbacks' => false,
             ]);
@@ -1463,7 +1480,7 @@ class Workflow extends AppModel
     }
 
     /**
-     * addWorkflow Add a worflow
+     * addWorkflow Add a workflow
      *
      * @param  array $trigger
      * @return array Any errors preventing the edition
@@ -1480,7 +1497,7 @@ class Workflow extends AppModel
     }
 
     /**
-     * editWorkflow Edit a worflow
+     * editWorkflow Edit a workflow
      *
      * @param  array $workflow
      * @return array Any errors preventing the edition
@@ -1628,13 +1645,15 @@ class Workflow extends AppModel
             if (!empty($labelsByNodes[$node['id']])) {
                 foreach ($node['inputs'] as $inputName => $inputs) {
                     foreach ($inputs['connections'] as $j => $connection) {
-                        $workflow['Workflow']['data'][$i]['inputs'][$inputName]['connections'][$j]['labels'] = array_map(function($label) {
-                            return [
-                                'id' => Inflector::variable($label),
-                                'name' => $label,
-                                'variant' => 'info',
-                            ];
-                        }, $labelsByNodes[$node['id']][$connection['node']]);
+                        if (!empty($labelsByNodes[$node['id']][$connection['node']])) {
+                            $workflow['Workflow']['data'][$i]['inputs'][$inputName]['connections'][$j]['labels'] = array_map(function($label) {
+                                return [
+                                    'id' => Inflector::variable($label),
+                                    'name' => $label,
+                                    'variant' => 'info',
+                                ];
+                            }, $labelsByNodes[$node['id']][$connection['node']]);
+                        }
                     }
                 }
             }
@@ -1642,7 +1661,7 @@ class Workflow extends AppModel
         return $workflow;
     }
     /**
-     * moduleSattelesExecution Executes a module using the provided configuration and returns back the result
+     * moduleStatelessExecution Executes a module using the provided configuration and returns back the result
      *
      * @param string $module_id
      * @param string|array $input_data
@@ -1666,11 +1685,18 @@ class Workflow extends AppModel
             $result['error'][] = __('Could not find a valid user to run the workflow. Please set setting `MISP.host_org_id` or make sure a valid site_admin user exists.');
             return $result;
         }
-        $roaming_data = $this->workflowGraphTool->getRoamingData($user_for_workflow, $data);
+        $initiatorUserId = Configure::check('CurrentUserId') ? Configure::read('CurrentUserId') : null;
+        $roaming_data = $this->workflowGraphTool->getRoamingData($user_for_workflow, $data, [], -1, null, $initiatorUserId);
         $errors = [];
         $success = $module_class->exec($node, $roaming_data, $errors);
         $result['success'] = $success;
         $result['errors'] = $errors;
+        if (!empty($module_config['isFiltering'])) {
+            $rData = $roaming_data->getData();
+            if (!empty($rData['Event'])) {
+                $result['filtered_data'] = ['Event' => $rData['Event']];
+            }
+        }
         return $result;
     }
 
@@ -1688,6 +1714,7 @@ class Workflow extends AppModel
                 'saved_filters' => $module_config['saved_filters'],
                 'module_data' => $module_config,
                 'expect_misp_core_format' => $module_config['expect_misp_core_format'],
+                'is_filtering' => $module_config['isFiltering'] ?? false,
             ],
             'inputs' => [],
             'outputs' => [],
@@ -1769,6 +1796,10 @@ class Workflow extends AppModel
             'timestamp' => date("c"),
             'data' => $data,
         ];
+        $initiatorUserId = Configure::check('CurrentUserId') ? Configure::read('CurrentUserId') : null;
+        if (!empty($initiatorUserId)) {
+            $dataToPost['initiator_user_id'] = $initiatorUserId;
+        }
         if (!empty($errors)) {
             $dataToPost['errors'] = $errors;
         }
